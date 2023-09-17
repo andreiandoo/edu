@@ -42,7 +42,8 @@ function myconnector_enqueue_scripts() {
     // Pass JSON URL to the script
     wp_localize_script('myconnector-script', 'myconnector_params', array(
         'jsonUrl' => plugin_dir_url(__FILE__) . 'countries-counties-cities.json',
-        'plugin_dir_url' => plugin_dir_url(__FILE__)
+        'plugin_dir_url' => plugin_dir_url(__FILE__),
+        'ajax_url' => admin_url('admin-ajax.php')
     ));
 }
 
@@ -702,6 +703,8 @@ function myconnector_api_login($email, $password, $device) {
     }
 
     return $token;
+
+    return array('status' => 'success', 'message' => 'Logged in successfully');
 }
 
 
@@ -1354,56 +1357,79 @@ function myconnector_agenda_shortcode($atts){
         document.getElementById('Inspiration').style.display = 'block';
 
         jQuery(document).ready(function ($) {
-            console.log('jQuery is working.');
-            
+            let sessionId;            
             // Open modal when 'Book a Session' link is clicked
             $('.openModalLink').click(function (e) {
                 e.preventDefault();
-                const sessionId = $(this).data('session-id');
+                sessionId = $(this).data('session-id');
                 console.log('Open Modal Clicked for Session ID: ' + sessionId);
                 $('#loginModal').removeClass('hidden');
             });
     
-            // Close modal when 'Close' button is clicked
-            $('#closeModal').click(function () {
-                $('#loginModal').addClass('hidden');
-            });
-    
             // Submit form and pass values to your myconnector_api_login() function
-            $('#submitForm').click(function (e) {
+            $('#submitForm').off('click').on('click', function (e) {
                 e.preventDefault();
-    
+            
                 // Retrieve form values
                 const email = $('#email').val();
                 const password = $('#password').val();
                 const device = $('#device').val();
 
-                $('#loginModal').addClass('hidden');
-    
-                // Call myconnector_api_login() function with the values
-                const api_token = myconnector_api_login(email, password, device);
-    
-                // Make the POST request to book a session
-                const sessionId = $(this).data('session-id'); // Get the session ID from the button data attribute
-                if (api_token) {
-                    if (sessionId) {
-                        const postUrl = `https://apiv3.myconnector.ro/v1/event/${event_id}/agenda/sessions/${sessionId}/book`;
+                let event_id = ${event_id};
+                console.log('Event ID:', ${event_id});
+            
+                // AJAX to call the myconnector_api_login PHP function
+                $.ajax({
+                    url: myconnector_params.ajax_url,
+                    type: 'POST',
+                    data: {
+                        action: 'myconnector_login',
+                        email: email,
+                        password: password,
+                        device: device
+                    },
+                    success: function(response) {
+                        var jsonResponse = JSON.parse(response);
+                        console.log(jsonResponse);
 
-                        $.ajax({
-                        type: 'POST',
-                        url: postUrl,
-                        headers: {
-                            'Authorization': `Bearer ${api_token}`,
-                        },
-                        success: function (response) {
-                            // Handle the success response here
-                        },
-                        error: function (error) {
-                            // Handle any errors here
+                        if (jsonResponse.status === 'success') {
+                            const api_token = jsonResponse.api_token;
+                            console.log('Session ID:', sessionId);
+                            let postUrl;
+                            if (sessionId) {
+                                postUrl = 'https://apiv3.myconnector.ro/v1/event/' + event_id + '/agenda/sessions/' + sessionId + '/book';
+            
+                                $.ajax({
+                                    type: 'POST',
+                                    url: postUrl,
+                                    headers: {
+                                        'Authorization': `Bearer ${api_token}`,
+                                    },
+                                    success: function (response) {
+                                        console.log('raspuns API - ', response);
+                                        // Handle the success response here
+                                    },
+                                    error: function (error) {
+                                        console.log('eroare API - ', error);
+                                        // Handle any errors here
+                                    }
+                                });
+                            }
+                            console.log(postUrl);
+                            $('#loginModal').addClass('hidden');
+                        } else if (response.status === 'error') {
+                            alert(response.message || 'An error occurred during login.');
                         }
-                        });
-                    };
-                }
+                    },
+                    error: function(error) {
+                        console.error('Error:', error);
+                    }
+                });
+            });
+
+            // Close modal when 'Close' button is clicked
+            $('#closeModal').click(function () {
+                $('#loginModal').addClass('hidden');
             });
         });
     </script>";
@@ -1514,3 +1540,27 @@ function renderSession($session) {
 }
 
 add_shortcode('myconnector_agenda', 'myconnector_agenda_shortcode');
+
+
+// Setting up AJAX endpoints for logged-in and non-logged-in users
+add_action('wp_ajax_myconnector_login', 'myconnector_api_login_ajax_handler');
+add_action('wp_ajax_nopriv_myconnector_login', 'myconnector_api_login_ajax_handler');
+
+function myconnector_api_login_ajax_handler() {
+    // Retrieve email, password, and device from the AJAX request
+    $email = isset($_POST['email']) ? sanitize_email($_POST['email']) : '';
+    $password = isset($_POST['password']) ? sanitize_text_field($_POST['password']) : '';
+    $device = isset($_POST['device']) ? sanitize_text_field($_POST['device']) : '';
+
+    // Call the existing myconnector_api_login function
+    $api_token = myconnector_api_login($email, $password, $device);
+
+    // Check if the api_token is valid
+    if ($api_token) {
+        echo json_encode(array('status' => 'success', 'api_token' => $api_token));
+    } else {
+        header('Content-Type: application/json');
+        echo json_encode(array('status' => 'error', 'message' => 'Invalid email or password'));
+    }
+    wp_die();
+}
